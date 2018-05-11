@@ -1,25 +1,15 @@
 import os
-import datetime
-from time import strftime
+import re
+from flask import Flask, jsonify, render_template, request
 
 from cs50 import SQL
-from flask import Flask, flash, redirect, render_template, request, session
-from flask_session import Session
-from tempfile import mkdtemp
-from werkzeug.exceptions import default_exceptions
-from werkzeug.security import check_password_hash, generate_password_hash
-
-from helpers import apology, login_required, lookup, usd
-
-# Ensure environment variable is set
-if not os.environ.get("API_KEY"):
-    raise RuntimeError("API_KEY not set")
+from helpers import lookup
 
 # Configure application
 app = Flask(__name__)
 
-# Ensure templates are auto-reloaded
-app.config["TEMPLATES_AUTO_RELOAD"] = True
+# Configure CS50 Library to use SQLite database
+db = SQL("sqlite:///mashup.db")
 
 
 # Ensure responses aren't cached
@@ -31,333 +21,279 @@ def after_request(response):
     return response
 
 
-# Custom filter
-app.jinja_env.filters["usd"] = usd
-
-# Configure session to use filesystem (instead of signed cookies)
-app.config["SESSION_FILE_DIR"] = mkdtemp()
-app.config["SESSION_PERMANENT"] = False
-app.config["SESSION_TYPE"] = "filesystem"
-Session(app)
-
-# Configure CS50 Library to use SQLite database
-db = SQL("sqlite:///finance.db")
-
-
 @app.route("/")
-@login_required
 def index():
-
-    # get user info
-    row = db.execute("SELECT * FROM users WHERE id = :user_id",
-                     user_id=session["user_id"])
-
-    cash = row[0]["cash"]
-    username = row[0]["username"]
-
-    """Show portfolio of stocks"""
-    transitions = []
-    all = db.execute("SELECT * FROM :username", username=username)
-
-    for i in all:
-        transitions.append((i["stockname"], usd(i["price"]), i["quantity"], usd(i["total"])))
-
-    return render_template("index.html", transitions=transitions, cash=usd(cash)), 200
+    """Render map"""
+    if not os.environ.get("API_KEY"):
+        raise RuntimeError("API_KEY not set")
+    return render_template("index.html", key=os.environ.get("API_KEY"))
 
 
-@app.route("/buy", methods=["GET", "POST"])
-@login_required
-def buy():
-    """Buy shares of stock"""
-    feedback = {}
-    shares = request.form.get("shares")
-    symbol = request.form.get("symbol")
-    user_id = session["user_id"]
-    # User reached route via POST (as by submitting a form via POST)
-    if request.method == "POST":
+@app.route("/articles")
+def articles():
+    """Look up articles for geo"""
+    geo = request.args.get("geo")
+    if not geo:
+        raise RuntimeError("missing geo")
+    data = lookup(geo)
+    if len(data) <= 5:
+        return jsonify(data)
+    else:
+        return jsonify(data[:5])
 
-        # Ensure username was submitted
-        if not symbol:
-            return apology("missing symbol", 400)
 
-        # Ensure username was submitted
-        if not shares:
-            return apology("missing shares", 400)
+@app.route("/search")
+def search():
+    """Search for places that match query"""
+    rows = []
+    q = request.args.get("q")
+    if not q:
+        raise RuntimeError("missing q")
 
-        if not str(shares).isnumeric():
-            return apology("must be postive interger", 400)
+    '''
+    db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vt USING fts4(content='places', postal_code, place_name, admin_name1, admin_code1)")
+    db.execute("INSERT INTO vt(vt) VALUES('rebuild')")
+    rows = db.execute("SELECT * FROM vt WHERE postal_code MATCH :q0", q0=listq[0])
+    '''
+    if ',' in q:
+        listq = [x.strip() for x in q.split(',')]
+    else:
+        listq = [x.strip() for x in q.split(' ')]
+    Listqlen = len(listq)
+    # print("listq = " + str(listq))
+    # print("len(listq) = " + str(len(listq)))
 
-        # stock exist or not
-        if lookup(symbol) == None:
-            return apology("non exist", 400)
-
+    if Listqlen == 1:
+        if listq[0].isdigit():
+            rows = db.execute("""SELECT * FROM places WHERE place_name LIKE (:q0)
+                              OR postal_code LIKE (:q1)
+                              OR latitude LIKE (:q0)
+                              OR longitude LIKE (:q0)
+                              OR country_code LIKE (:q0)""", q0="%" + listq[0] + "%", q1=listq[0] + "%")
         else:
-            feedback = lookup(symbol)
-
-        # create table test
-        # it works
-        db.execute("CREATE TABLE IF NOT EXISTS history (id integer, stockname text, price real, quantity integer,dt datetime)")
-
-        # get user info
-        row = db.execute("SELECT * FROM users WHERE id = :user_id",
-                         user_id=user_id)
-
-        cash = row[0]["cash"]
-        username = row[0]["username"]
-        price = feedback["price"]
-
-        cash = cash - (feedback["price"] * int(shares))
-        if cash < 0:
-            return apology("not enough money", 400)
-
-        session["cash"] = cash
-
-        db.execute("UPDATE users SET cash = :cash WHERE id = :id",
-                   cash=cash, id=user_id)
-
-        # Query database for username
-        db.execute("INSERT INTO history (id, stockname, price, quantity, dt) VALUES (:id, :stockname, :price, :quantity, :dt)",
-                   id=user_id, stockname=symbol, price=price, quantity=shares, dt=datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d %H:%M:%S'))
-
-        # get data from user's table and to update it.
-        look = db.execute("SELECT * FROM :username WHERE stockname = :stockname",
-                          username=username, stockname=symbol)
-
-        if look == []:
-            # insert
-            db.execute("INSERT INTO :username (stockname, price, quantity, total) VALUES (:stockname, :price, :quantity, :total)",
-                       username=username, stockname=symbol, price=price, quantity=shares, total=price * int(shares))
+            rows = db.execute("""SELECT * FROM places WHERE place_name LIKE (:q0)
+                              OR country_code LIKE (:q0)""", q0="%" + listq[0] + "%")
+    elif Listqlen == 2:
+        if listq[0].isdigit():
+            rows = db.execute("""SELECT * FROM places WHERE place_name = :q0
+                              OR postal_code = :q0
+                              OR latitude = :q0
+                              OR longitude = :q0
+                              OR country_code = :q0
+                              AND (place_name = :q1
+                              OR country_code = :q1
+                              OR admin_code1 = :q1
+                              OR admin_code2 = :q1
+                              OR admin_code3 = :q1
+                              OR admin_name1 = :q1
+                              OR admin_name2 = :q1
+                              OR admin_name3 = :q1)""", q0=listq[0], q1=listq[1])
+        elif listq[1].isdigit():
+            rows = db.execute("""SELECT * FROM places WHERE place_name = :q0
+                              OR postal_code = :q0
+                              OR latitude = :q0
+                              OR longitude = :q0
+                              OR country_code = :q0
+                              AND (place_name = :q1
+                              OR country_code = :q1
+                              OR admin_code1 = :q1
+                              OR admin_code2 = :q1
+                              OR admin_code3 = :q1
+                              OR admin_name1 = :q1
+                              OR admin_name2 = :q1
+                              OR admin_name3 = :q1)""", q0=listq[1], q1=listq[0])
         else:
-            # take data out and update it
-            shares = int(shares) + look[0]["quantity"]
-            total = int(shares) * price
-            db.execute("UPDATE :username SET quantity = :shares WHERE stockname = :stockname",
-                       username=username, shares=shares, stockname=symbol)
-
-            db.execute("UPDATE :username SET total = :total WHERE stockname = :stockname",
-                       username=username, total=total, stockname=symbol)
-
-        session["status"] = "Bought!!"
-        return redirect("/")
-
-    # User reached route via GET (as by clicking a link or via redirect)
-    else:
-        return render_template("buy.html")
-
-
-@app.route("/history")
-@login_required
-def history():
-    """Show history of transactions"""
-    transactions = []
-    all = db.execute("SELECT * FROM history WHERE id=:id", id=session["user_id"])
-
-    for i in all:
-        transactions.append((i["stockname"].upper(), i["quantity"], usd(i["price"]), i["dt"]))
-
-    session["status"] = ""
-    return render_template("history.html", transactions=transactions, status="")
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    """Log user in"""
-
-    # Forget any user_id
-    session.clear()
-
-    # User reached route via POST (as by submitting a form via POST)
-    if request.method == "POST":
-
-        # Ensure username was submitted
-        if not request.form.get("username"):
-            return apology("must provide username", 403)
-
-        # Ensure password was submitted
-        elif not request.form.get("password"):
-            return apology("must provide password", 403)
-
-        # Query database for username
-        rows = db.execute("SELECT * FROM users WHERE username = :username",
-                          username=request.form.get("username"))
-
-        # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
-            return apology("invalid username and/or password", 403)
-
-        # Remember which user has logged in
-        session["user_id"] = rows[0]["id"]
-        session["username"] = rows[0]["username"]
-        session["cash"] = rows[0]["cash"]
-        session["status"] = "Welcome!!"
-
-        # Redirect user to home page
-        return redirect("/")
-
-    # User reached route via GET (as by clicking a link or via redirect)
-    else:
-        return render_template("login.html")
-
-
-@app.route("/logout")
-def logout():
-    """Log user out"""
-
-    # Forget any user_id
-    session.clear()
-
-    # Redirect user to login form
-    return redirect("/")
-
-
-@app.route("/quote", methods=["GET", "POST"])
-@login_required
-def quote():
-    """Get stock quote."""
-    # User reached route via POST (as by submitting a form via POST)
-    if request.method == "POST":
-
-        # Ensure username was submitted
-        if not request.form.get("symbol"):
-            return apology("missing symbol", 400)
-
-        if lookup(request.form.get("symbol")) == None:
-            return apology("username taken", 400)
-
+            rows = db.execute("""SELECT * FROM places WHERE (place_name LIKE :q0
+                              OR country_code LIKE :q0
+                              OR admin_code1 LIKE :q0
+                              OR admin_code2 LIKE :q0
+                              OR admin_code3 LIKE :q0
+                              OR admin_name1 LIKE :q0
+                              OR admin_name2 LIKE :q0
+                              OR admin_name3 LIKE :q0)
+                              AND (place_name LIKE :q1
+                              OR country_code LIKE :q1
+                              OR admin_code1 LIKE :q1
+                              OR admin_code2 LIKE :q1
+                              OR admin_code3 LIKE :q1
+                              OR admin_name1 LIKE :q1
+                              OR admin_name2 LIKE :q1
+                              OR admin_name3 LIKE :q1)""", q0=listq[0] + '%', q1='%' + listq[1] + '%')
+    elif Listqlen == 3:
+        if listq[0].isdigit():
+            rows = db.execute("""SELECT * FROM places WHERE
+                              (place_name LIKE :q0
+                              OR postal_code LIKE :q0_1
+                              OR latitude LIKE :q0
+                              OR longitude LIKE :q0
+                              OR country_code LIKE :q0)
+                              AND (country_code LIKE :q1
+                              OR place_name LIKE :q1
+                              OR admin_code1 LIKE :q1
+                              OR admin_code2 LIKE :q1
+                              OR admin_code3 LIKE :q1
+                              OR admin_name1 LIKE :q1
+                              OR admin_name2 LIKE :q1
+                              OR admin_name3 LIKE :q1)
+                              AND (place_name LIKE :q2
+                              OR country_code LIKE :q2
+                              OR admin_code1 LIKE :q2
+                              OR admin_code2 LIKE :q2
+                              OR admin_code3 LIKE :q2
+                              OR admin_name1 LIKE :q2
+                              OR admin_name2 LIKE :q2
+                              OR admin_name3 LIKE :q2)""", q0="%" + listq[0] + "%", q0_1=listq[0] + "%", q1='%' + listq[1] + '%', q2='%' + listq[2] + '%')
+        elif listq[1].isdigit():
+            rows = db.execute("""SELECT * FROM places WHERE
+                              (place_name LIKE :q0
+                              OR postal_code LIKE :q0_1
+                              OR latitude LIKE :q0
+                              OR longitude LIKE :q0
+                              OR country_code LIKE :q0)
+                              AND (country_code LIKE :q1
+                              OR place_name LIKE :q1
+                              OR admin_code1 LIKE :q1
+                              OR admin_code2 LIKE :q1
+                              OR admin_code3 LIKE :q1
+                              OR admin_name1 LIKE :q1
+                              OR admin_name2 LIKE :q1
+                              OR admin_name3 LIKE :q1)
+                              AND (place_name LIKE :q2
+                              OR country_code LIKE :q2
+                              OR admin_code1 LIKE :q2
+                              OR admin_code2 LIKE :q2
+                              OR admin_code3 LIKE :q2
+                              OR admin_name1 LIKE :q2
+                              OR admin_name2 LIKE :q2
+                              OR admin_name3 LIKE :q2)""", q0="%" + listq[1] + "%", q0_1=listq[1] + "%", q1='%' + listq[0] + '%', q2='%' + listq[2] + '%')
+        elif listq[2].isdigit():
+            rows = db.execute("""SELECT * FROM places WHERE
+                              (place_name LIKE :q0
+                              OR postal_code LIKE :q0_1
+                              OR latitude LIKE :q0
+                              OR longitude LIKE :q0
+                              OR country_code LIKE :q0)
+                              AND (country_code LIKE :q1
+                              OR place_name LIKE :q1
+                              OR admin_code1 LIKE :q1
+                              OR admin_code2 LIKE :q1
+                              OR admin_code3 LIKE :q1
+                              OR admin_name1 LIKE :q1
+                              OR admin_name2 LIKE :q1
+                              OR admin_name3 LIKE :q1)
+                              AND (place_name LIKE :q2
+                              OR country_code LIKE :q2
+                              OR admin_code1 LIKE :q2
+                              OR admin_code2 LIKE :q2
+                              OR admin_code3 LIKE :q2
+                              OR admin_name1 LIKE :q2
+                              OR admin_name2 LIKE :q2
+                              OR admin_name3 LIKE :q2)""", q0="%" + listq[2] + "%", q0_1=listq[2] + "%", q1='%' + listq[1] + '%', q2='%' + listq[0] + '%')
         else:
-            feedback = lookup(request.form.get("symbol"))
-            session["status"] = ""
-            return render_template("quoted.html", price=usd(feedback["price"]), stockname=feedback["symbol"])
+            rows = db.execute("""SELECT * FROM places WHERE
+                              (place_name LIKE :q0
+                              OR admin_code1 LIKE :q0
+                              OR admin_code2 LIKE :q0
+                              OR admin_code3 LIKE :q0
+                              OR admin_name1 LIKE :q0
+                              OR admin_name2 LIKE :q0
+                              OR admin_name3 LIKE :q0
+                              OR country_code LIKE :q0)
+                              AND (country_code LIKE :q1
+                              OR place_name LIKE :q1
+                              OR admin_code1 LIKE :q1
+                              OR admin_code2 LIKE :q1
+                              OR admin_code3 LIKE :q1
+                              OR admin_name1 LIKE :q1
+                              OR admin_name2 LIKE :q1
+                              OR admin_name3 LIKE :q1)
+                              AND (place_name LIKE :q2
+                              OR country_code LIKE :q2
+                              OR admin_code1 LIKE :q2
+                              OR admin_code2 LIKE :q2
+                              OR admin_code3 LIKE :q2
+                              OR admin_name1 LIKE :q2
+                              OR admin_name2 LIKE :q2
+                              OR admin_name3 LIKE :q2)""", q0="%" + listq[0] + "%", q1='%' + listq[1] + '%', q2='%' + listq[2] + '%')
 
-    # User reached route via GET (as by clicking a link or via redirect)
+    '''
+        #q0 = listq[0] + "%"
+        rows = db.execute("""SELECT * FROM vt WHERE place_name MATCH (:q0)
+                          OR postal_code like (:q0)
+                          OR country_code like (:q0)""", q0=q0)
+    elif len(listq) == 2:
+        listq.append("")
+        listq.append("")
+
+    rows = db.execute("""SELECT * FROM places WHERE place_name IN (:q0 , :q1, :q2)
+                       AND country_code IN (:q0 , :q1, :q2)
+                       AND postal_code IN (:q0 , :q1, :q2)
+                       LIMIT 10""",
+                       q0=listq[0], q1=listq[1], q2=listq[2])
+    '''
+
+    #rows = db.execute("SELECT * FROM places WHERE place_name IN (:q2)", q2=listq[0])
+
+    return jsonify(rows)
+
+
+@app.route("/update")
+def update():
+    """Find up to 10 places within view"""
+
+    # Ensure parameters are present
+    if not request.args.get("sw"):
+        raise RuntimeError("missing sw")
+    if not request.args.get("ne"):
+        raise RuntimeError("missing ne")
+
+    # Ensure parameters are in lat,lng format
+    if not re.search("^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$", request.args.get("sw")):
+        raise RuntimeError("invalid sw")
+    if not re.search("^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$", request.args.get("ne")):
+        raise RuntimeError("invalid ne")
+
+    # Explode southwest corner into two variables
+    sw_lat, sw_lng = map(float, request.args.get("sw").split(","))
+
+    # Explode northeast corner into two variables
+    ne_lat, ne_lng = map(float, request.args.get("ne").split(","))
+
+    # Find 10 cities within view, pseudorandomly chosen if more within view
+    if sw_lng <= ne_lng:
+
+        # Doesn't cross the antimeridian
+        # use AND in second line
+        rows = db.execute("""SELECT * FROM places
+                          WHERE :sw_lat <= latitude AND latitude <= :ne_lat AND (:sw_lng <= longitude AND longitude <= :ne_lng)
+                          GROUP BY country_code, place_name, admin_code1
+                          ORDER BY RANDOM()
+                          LIMIT 10""",
+                          sw_lat=sw_lat, ne_lat=ne_lat, sw_lng=sw_lng, ne_lng=ne_lng)
+
     else:
-        return render_template("quote.html")
 
+        # Crosses the antimeridian
+        # use OR in second line
+        rows = db.execute("""SELECT * FROM places
+                          WHERE :sw_lat <= latitude AND latitude <= :ne_lat AND (:sw_lng <= longitude OR longitude <= :ne_lng)
+                          GROUP BY country_code, place_name, admin_code1
+                          ORDER BY RANDOM()
+                          LIMIT 10""",
+                          sw_lat=sw_lat, ne_lat=ne_lat, sw_lng=sw_lng, ne_lng=ne_lng)
 
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    """Register user"""
+    '''
+    print()
+    print()
+    print()
+    print("jsonify[rows] = " + str(rows))
+    print()
+    print()
+    print()
+    print("rows[0][latitude] = " + str(rows[0]["latitude"]))
+    print("rows[0][longitude] = " + str(rows[0]["longitude"]))
+    print("rows = " + str(len(rows)))
+    '''
 
-    username = request.form.get("username")
-    password = request.form.get("password")
-    confirmation = request.form.get("confirmation")
-    # User reached route via POST (as by submitting a form via POST)
-    if request.method == "POST":
-
-        # Ensure username was submitted
-        if not username:
-            return apology("must provide username")
-
-        # Ensure password was submitted
-        elif not password:
-            return apology("must provide password")
-
-        # Ensure password (again) was submitted
-        elif not confirmation:
-            return apology("must provide password (again)")
-
-        # password was not matched
-        if password != confirmation:
-            return apology("passwords don't match")
-
-        # Query database for username
-        feedback = db.execute("INSERT INTO users (username, hash) VALUES (:username, :hash)",
-                              username=username, hash=generate_password_hash(password))
-
-        if feedback == None:
-            return apology("username taken")
-            #
-        else:
-            session["user_id"] = feedback
-            session["cash"] = 10000.00
-            session["username"] = username
-        # Remember which user has logged in
-
-        # everyone has its private data about stock
-        db.execute("CREATE TABLE IF NOT EXISTS :username (stockname text, price real, quantity integer, total real)",
-                   username=username)
-
-        session["status"] = "Registered!!"
-
-        # Redirect user to home page
-        return redirect("/")
-
-    # User reached route via GET (as by clicking a link or via redirect)
-    else:
-        return render_template("register.html"), 200
-
-
-@app.route("/sell", methods=["GET", "POST"])
-@login_required
-def sell():
-    """Sell shares of stock"""
-
-    symbol = request.form.get("symbol")
-    shares = request.form.get("shares")
-    # User reached route via POST (as by submitting a form via POST)
-    if request.method == "POST":
-
-        # Ensure username was submitted
-        if not symbol:
-            return apology("missing symbol", 400)
-
-        # Ensure password was submitted
-        elif not shares:
-            return apology("missing shares", 400)
-
-        row = db.execute("SELECT * FROM :username WHERE stockname=:symbol", username=session["username"], symbol=symbol.lower())
-
-        if row == []:
-            return apology("no stock can sell", 400)
-
-        if not str(shares).isnumeric():
-            return apology("must be postive interger", 400)
-
-        quantity = row[0]["quantity"]
-        price = row[0]["price"]
-        diff = quantity - int(shares)
-
-        if quantity < int(shares):
-            return apology("not enough shares", 400)
-
-        if quantity > int(shares):
-            # update quantity
-            db.execute("UPDATE :username SET quantity = :shares WHERE stockname = :symbol",
-                       username=session["username"], shares=quantity - int(shares), symbol=symbol.lower())
-
-            # update total
-            db.execute("UPDATE :username SET total = :total WHERE stockname = :symbol",
-                       username=session["username"], total=(diff * price), symbol=symbol.lower())
-
-        elif quantity == int(shares):
-            db.execute("DELETE FROM :username WHERE stockname = :symbol",
-                       username=session["username"], symbol=symbol.lower())
-
-        # update cash
-        db.execute("UPDATE users SET cash = :cash WHERE id = :user_id",
-                   cash=session["cash"] + (int(shares) * price), user_id=session["user_id"])
-
-        db.execute("INSERT INTO history (id, stockname, price, quantity, dt) VALUES (:id, :stockname, :price, :quantity, :dt)",
-                   id=session["user_id"], stockname=symbol, price=price, quantity=int(shares) * -1, dt=datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d %H:%M:%S'))
-
-        session["cash"] = session["cash"] + (int(shares) * price)
-
-        session["status"] = "Sold!!"
-        # Redirect user to home page
-        return redirect("/")
-
-    # User reached route via GET (as by clicking a link or via redirect)
-    else:
-        raw = db.execute("SELECT stockname FROM :username", username=session['username'])
-        items = [(i["stockname"]).upper() for i in raw]
-        return render_template("sell.html", items=items)
-
-
-def errorhandler(e):
-    """Handle error"""
-    return apology(e.name, e.code)
-
-
-# listen for errors
-for code in default_exceptions:
-    app.errorhandler(code)(errorhandler)
+    # Output places as JSON
+    return jsonify(rows)

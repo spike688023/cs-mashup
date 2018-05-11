@@ -1,47 +1,54 @@
-{% extends "layout.html" %}
+<!DOCTYPE html>
 
-{% block title %}
-    Portfolio
-{% endblock %}
+<html>
+    <head>
 
-{% block main %}
-<div style="font-size: large; font-family: sans-serif">
-  <p style="color: #000011; background-color: powderblue">{{ status }}</p>
-</div>
+        <!-- https://developer.mozilla.org/en-US/docs/Web/HTML/Element/meta -->
+        <meta charset="utf-8"/>
+        <meta content="initial-scale=1, width=device-width" name="viewport"/>
 
-    <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Symbol</th>
-                <th>Name</th>
-                <th>Shares</th>
-                <th>Price</th>
-                <th>TOTAL</th>
-            </tr>
-        </thead>
-        <tfoot>
-            <tr>
-                <td colspan="4"></td>
-                <td>$10,000.00</td>
-            </tr>
-        </tfoot>
-        <tbody>
-            {% for stockname, price, quantity, total in transitions %}
-                <tr>
-                    <td> {{ stockname }} </td>
-                    <td> {{ stockname }} </td>
-                    <td> {{ quantity }} </td>
-                    <td> {{ price }} </td>
-                    <td> {{ total }} </td>
-                </tr>
-            {% endfor %}
-            <tr>
-                <td>CASH</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td>{{ cash }}</td>
-            </tr>
-        </tbody>
-    </table>
-{% endblock %}
+        <!-- http://getbootstrap.com/ -->
+        <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet"/>
+
+        <!-- App's own CSS -->
+        <link href="/static/styles.css" rel="stylesheet"/>
+
+        <!-- https://developers.google.com/maps/documentation/javascript/ -->
+        <script src="https://maps.googleapis.com/maps/api/js?key={{ key | urlencode }}&v=3.exp"></script>
+
+        <!-- http://jquery.com/ -->
+        <script src="https://code.jquery.com/jquery-latest.min.js"></script>
+
+        <!-- http://getbootstrap.com/ -->
+        <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
+
+        <!-- https://github.com/corejavascript/typeahead.js/blob/master/doc/jquery_typeahead.md -->
+        <script src="https://cdn.rawgit.com/corejavascript/typeahead.js/master/dist/typeahead.jquery.js"></script>
+
+        <!-- http://handlebarsjs.com/ -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.5/handlebars.min.js"></script>
+
+        <!-- app's own JavaScript -->
+        <script src="/static/scripts.js"></script>
+
+        <title>Mashup</title>
+
+    </head>
+    <body>
+
+        <!-- Fill viewport -->
+        <div class="container-fluid">
+
+            <!-- https://developers.google.com/maps/documentation/javascript/tutorial -->
+            <div id="map-canvas"></div>
+
+            <!-- http://getbootstrap.com/css/#forms -->
+            <form id="form">
+                <div class="form-group">
+                    <label class="sr-only" for="q">City, State, Postal Code</label>
+                    <input class="form-control" autocomplete="off" id="q" placeholder="City, State, Postal Code" type="text"/>
+                </div>
+            </form>
+        </div>
+    </body>
+</html>
