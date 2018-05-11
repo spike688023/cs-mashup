@@ -5,7 +5,7 @@ USER root
 RUN echo "FLASK_APP='application.py'" >> /etc/environment
 
 # Default port (to match CS50 IDE)
-EXPOSE 8080
+EXPOSE 8081
 
 # Packages 
 RUN apt-get update && \
