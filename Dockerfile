@@ -38,9 +38,9 @@ RUN chmod a+r /usr/local/etc/*
 RUN echo "This is CS50 Server." > /etc/motd
 
 # When child image is built from this one, copy its files into image
-#ONBUILD COPY . /var/www/
-ONBUILD RUN chown -R www-data:www-data /var/www
+COPY ./examples/flask/ /var/www/
+RUN chown -R www-data:www-data /var/www
 WORKDIR /var/www
 
 # Start server within WORKDIR
-CMD ["passenger", "start", "-p", "8080", "--app-type", "wsgi", "--startup-file", "passenger_wsgi.py"]
+CMD ["passenger", "start", "-p", "8081", "--app-type", "wsgi", "--startup-file", "passenger_wsgi.py"]
