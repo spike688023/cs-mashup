@@ -12,3 +12,6 @@ run:
 
 shell:
 	docker exec -it server_mashup bash -l
+
+logs:
+	docker logs server_mashup
