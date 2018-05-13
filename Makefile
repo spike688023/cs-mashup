@@ -1,5 +1,8 @@
 default: run
 
+pull:
+	docker pull spike688023/cs-mashup && docker tag spike688023/cs-mashup cs50/mashup
+
 build:
 	docker build -t cs50/mashup .
 
@@ -15,3 +18,6 @@ shell:
 
 logs:
 	docker logs server_mashup
+
+rm:
+	docker rm -f server_mashup
